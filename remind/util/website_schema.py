@@ -81,3 +81,10 @@ schema['leetcode.com'] = WebsitePatterns(
     _shorthands=['leetcode', 'lc'],
     _prefix='LeetCode'
 )
+
+schema['tlx.toki.id'] = WebsitePatterns(
+    _allowed_patterns=['TLX Regular Open Contest', 'TROC'],
+    _disallowed_patterns=[],
+    _shorthands=['toki', 'troc'],
+    _prefix='TOKI Regular Open Contest'
+)
