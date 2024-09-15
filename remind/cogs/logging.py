@@ -23,8 +23,8 @@ class Logging(commands.Cog, logging.Handler):
     async def on_ready(self):
         self.task = asyncio.create_task(self._log_task())
         width = 79
-        stars = f'`{"*" * width}`'
-        msg = f'`***{"Bot running":^{width - 6}}***`'
+        stars = f'{"*" * width}'
+        msg = f'***{"Bot running":^{width - 6}}***'
         self.logger.log(level=100, msg=stars)
         self.logger.log(level=100, msg=msg)
         self.logger.log(level=100, msg=stars)
