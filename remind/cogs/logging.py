@@ -42,7 +42,7 @@ class Logging(commands.Cog, logging.Handler):
                 break
             try:
                 msg = self.format(record)
-                await channel.send(msg)
+                await channel.send('```{}```'.format(msg))
             except BaseException:
                 self.handleError(record)
 
