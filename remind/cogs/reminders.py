@@ -37,11 +37,21 @@ _GUILD_SETTINGS_BACKUP_PERIOD = 6 * 60 * 60  # seconds
 
 GuildSettings = recordtype(
     'GuildSettings', [
-        ('remind_channel_id', None), ('remind_role_id', None), ('remind_before', None),
-        ('finalcall_channel_id', None), ('finalcall_before', None),
-        ('auto_nope_react', False),
-        ('add_first_reaction', False),
-        ('website_patterns', defaultdict(WebsitePatterns))])
+        ('remind_channel_id_div1', None),
+        ('remind_role_id_div1', None),
+        ('remind_before_div1', None),
+        ('finalcall_channel_id_div1', None),
+        ('finalcall_before_div1', None),
+        ('subscribed_websites_div1', set()),
+
+        ('remind_channel_id_all', None),
+        ('remind_role_id_all', None),
+        ('remind_before_all', None),
+        ('finalcall_channel_id_all', None),
+        ('finalcall_before_all', None),
+        ('subscribed_websites_all', set())
+    ]
+)
 
 
 class RemindRequest:
@@ -63,7 +73,8 @@ class FinalCallRequest:
 
 def get_default_guild_settings():
     settings = GuildSettings()
-    settings.website_patterns = copy.deepcopy(website_schema.schema)
+    settings.subscribed_websites_div1 = set()
+    settings.subscribed_websites_all = set()
     return settings
 
 
@@ -152,20 +163,31 @@ def create_tuple_defaultdict():
 class Reminders(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.future_contests = None
-        self.contest_cache = None
-        self.active_contests = None
-        self.finished_contests = None
-        self.start_time_map = defaultdict(list)
-        self.task_map = defaultdict(list)
+
+        self.future_contests_div1 = None
+        self.contest_cache_div1 = None
+        self.active_contests_div1 = None
+        self.finished_contests_div1 = None
+        self.start_time_map_div1 = defaultdict(list)
+        self.task_map_div1 = defaultdict(list)
+
+        self.future_contests_all = None
+        self.contest_cache_all = None
+        self.active_contests_all = None
+        self.finished_contests_all = None
+        self.start_time_map_all = defaultdict(list)
+        self.task_map_all = defaultdict(list)
+
         # Maps guild_id to `GuildSettings`
         self.guild_map = defaultdict(get_default_guild_settings)
         self.last_guild_backup_time = -1
         self.reaction_emoji = "✅"
         self.nope_emoji = 973583086174498847
 
-        self.finalcall_map = defaultdict(create_tuple_defaultdict)
-        self.finaltasks = defaultdict(lambda: dict())
+        self.finalcall_map_div1 = defaultdict(create_tuple_defaultdict)
+        self.finaltasks_div1 = defaultdict(lambda: dict())
+        self.finalcall_map_all = defaultdict(create_tuple_defaultdict)
+        self.finaltasks_all = defaultdict(lambda: dict())
 
         self.member_converter = commands.MemberConverter()
         self.role_converter = commands.RoleConverter()
@@ -180,7 +202,8 @@ class Reminders(commands.Cog):
             with guild_map_path.open('rb') as guild_map_file:
                 data = pickle.load(guild_map_file)
                 guild_map = data["guild_map"]
-                self.finalcall_map = data["finalcall_map"]
+                self.finalcall_map_div1 = data["finalcall_map_div1"]
+                self.finalcall_map_all = data["finalcall_map_all"]
                 for guild_id, guild_settings in guild_map.items():
                     self.guild_map[guild_id] = GuildSettings(**{key: value
                                                                 for key, value
@@ -199,30 +222,51 @@ class Reminders(commands.Cog):
     async def _update_task(self):
         self.logger.info(f'Invoking Scheduled Reminder Updates')
         self._generate_contest_cache()
-        contest_cache = self.contest_cache
+        contest_cache_div1 = self.contest_cache_div1
+        contest_cache_all = self.contest_cache_all
         current_time = dt.datetime.utcnow()
 
-        self.future_contests = [
-            contest for contest in contest_cache
+        self.future_contests_div1 = [
+            contest for contest in contest_cache_div1
             if contest.start_time > current_time
         ]
-        self.finished_contests = [
-            contest for contest in contest_cache
+        self.finished_contests_div1 = [
+            contest for contest in contest_cache_div1
             if contest.start_time + contest.duration < current_time
         ]
-        self.active_contests = [
-            contest for contest in contest_cache
+        self.active_contests_div1 = [
+            contest for contest in contest_cache_div1
             if contest.start_time <= current_time <= contest.start_time + contest.duration
         ]
 
-        self.active_contests.sort(key=lambda contest: contest.start_time)
-        self.finished_contests.sort(key=lambda contest: contest.start_time + contest.duration, reverse=True)
-        self.future_contests.sort(key=lambda contest: contest.start_time)
+        self.future_contests_all = [
+            contest for contest in contest_cache_all
+            if contest.start_time > current_time
+        ]
+        self.finished_contests_all = [
+            contest for contest in contest_cache_all
+            if contest.start_time + contest.duration < current_time
+        ]
+        self.active_contests_all = [
+            contest for contest in contest_cache_all
+            if contest.start_time <= current_time <= contest.start_time + contest.duration
+        ]
+
+        self.active_contests_div1.sort(key=lambda contest: contest.start_time)
+        self.active_contests_all.sort(key=lambda contest: contest.start_time)
+        self.finished_contests_div1.sort(key=lambda contest: contest.start_time + contest.duration, reverse=True)
+        self.finished_contests_all.sort(key=lambda contest: contest.start_time + contest.duration, reverse=True)
+        self.future_contests_div1.sort(key=lambda contest: contest.start_time)
+        self.future_contests_all.sort(key=lambda contest: contest.start_time)
         # Keep most recent _FINISHED_LIMIT
-        self.finished_contests = self.finished_contests[:_FINISHED_CONTESTS_LIMIT]
-        self.start_time_map.clear()
-        for contest in self.future_contests:
-            self.start_time_map[time.mktime(contest.start_time.timetuple())].append(contest)
+        self.finished_contests_div1 = self.finished_contests_div1[:_FINISHED_CONTESTS_LIMIT]
+        self.finished_contests_all = self.finished_contests_all[:_FINISHED_CONTESTS_LIMIT]
+        self.start_time_map_div1.clear()
+        for contest in self.future_contests_div1:
+            self.start_time_map_div1[time.mktime(contest.start_time.timetuple())].append(contest)
+        self.start_time_map_all.clear()
+        for contest in self.future_contests_all:
+            self.start_time_map_all[time.mktime(contest.start_time.timetuple())].append(contest)
         self._reschedule_all_tasks()
         await asyncio.sleep(_CONTEST_REFRESH_PERIOD)
         asyncio.create_task(self._update_task())
@@ -233,17 +277,22 @@ class Reminders(commands.Cog):
         with db_file.open() as f:
             data = json.load(f)
         contests = [Round(contest) for contest in data['objects']]
-        self.contest_cache = [contest for contest in contests if contest.is_desired(website_schema.schema)]
+        self.contest_cache_div1 = [contest for contest in contests if contest.is_desired_for_div1(website_schema.schema)]
+        self.contest_cache_all = [contest for contest in contests if contest.is_desired_for_all(website_schema.schema)]
 
     def get_guild_contests(self, contests, guild_id):
         settings = self.guild_map[guild_id]
 
-        desired_contests = []
-        for contest in contests:
-            if contest.is_desired(settings.website_patterns):
-                desired_contests.append(contest)
+        desired_contests_for_div1 = []
+        desired_contests_for_all = []
 
-        return desired_contests
+        for contest in contests:
+            if contest.is_desired_for_div1(settings.subscribed_websites_div1):
+                desired_contests_for_div1.append(contest)
+            if contest.is_desired_for_all(settings.subscribed_websites_all):
+                desired_contests_for_all.append(contest)
+
+        return desired_contests_for_div1, desired_contests_for_all
 
     def _reschedule_all_tasks(self):
         for guild in self.bot.guilds:
@@ -251,73 +300,130 @@ class Reminders(commands.Cog):
             self._reschedule_finalcall_tasks(guild.id)
 
     def _reschedule_reminder_tasks(self, guild_id):
-        for task in self.task_map[guild_id]:
+        for task in self.task_map_div1[guild_id]:
             task.cancel()
-        self.task_map[guild_id].clear()
+        for task in self.task_map_all[guild_id]:
+            task.cancel()
+        self.task_map_div1[guild_id].clear()
+        self.task_map_all[guild_id].clear()
+
         self.logger.info(f'Tasks for guild "{self.bot.get_guild(guild_id)}" cleared')
 
-        if not self.start_time_map:
-            return
-
         settings = self.guild_map[guild_id]
-        if settings.remind_role_id is None:
-            return
 
-        guild = self.bot.get_guild(guild_id)
-        channel, role = guild.get_channel(settings.remind_channel_id), guild.get_role(settings.remind_role_id)
+        if self.start_time_map_div1 and not settings.remind_role_id_div1 is None:
+            guild = self.bot.get_guild(guild_id)
 
-        for start_time, contests in self.start_time_map.items():
-            contests = self.get_guild_contests(contests, guild_id)
-            if not contests:
-                continue
+            channel_div1 = guild.get_channel(settings.remind_channel_id_div1)
+            role_div1 =  guild.get_role(settings.remind_role_id_div1)
 
-            website_seggregated_contests = dict()
-            for contest in contests:
-                website_seggregated_contests[contest.url] = contest  # an url can uniquely identify a contest
+            for start_time, contests in self.start_time_map_div1.items():
+                contests_for_div1 = self.get_guild_contests(contests, guild_id)[0]
 
-            for _, seg_contest in website_seggregated_contests.items():
-                for before_mins in settings.remind_before:
-                    before_secs = 60 * before_mins
-                    request = RemindRequest(channel, role, seg_contest, before_secs, start_time - before_secs)
-                    task = asyncio.create_task(_send_reminder_at(request))
-                    self.task_map[guild_id].append(task)
+                if not contests_for_div1:
+                    continue
 
-        self.logger.info(
-            f'{len(self.task_map[guild_id])} reminder tasks scheduled for guild "{self.bot.get_guild(guild_id)}"')
+                website_seggregated_contests_for_div1 = dict()
+                for contest_for_div1 in contests_for_div1:
+                    website_seggregated_contests_for_div1[contest_for_div1.url] = contest_for_div1  # an url can uniquely identify a contest
+
+                for _, seg_contest in website_seggregated_contests_for_div1.items():
+                    for before_mins in settings.remind_before_div1:
+                        before_secs = 60 * before_mins
+                        request = RemindRequest(channel_div1, role_div1, seg_contest, before_secs, start_time - before_secs)
+                        task = asyncio.create_task(_send_reminder_at(request))
+                        self.task_map_div1[guild_id].append(task)
+
+            self.logger.info(
+                f'{len(self.task_map_div1[guild_id])} div1 reminder tasks scheduled for guild "{self.bot.get_guild(guild_id)}"')
+
+        if self.start_time_map_all and not settings.remind_role_id_all is None:
+            guild = self.bot.get_guild(guild_id)
+
+            channel_all = guild.get_channel(settings.remind_channel_id_all)
+            role_all = guild.get_role(settings.remind_role_id_all)
+
+            for start_time, contests in self.start_time_map_all.items():
+                contests_for_all = self.get_guild_contests(contests, guild_id)[1]
+
+                if not contests_for_all:
+                    continue
+
+                website_seggregated_contests_for_all = dict()
+                for contest_for_all in contests_for_all:
+                    website_seggregated_contests_for_all[contest_for_all.url] = contest_for_all  # an url can uniquely identify a contest
+
+                for _, seg_contest in website_seggregated_contests_for_all.items():
+                    for before_mins in settings.remind_before_all:
+                        before_secs = 60 * before_mins
+                        request = RemindRequest(channel_all, role_all, seg_contest, before_secs, start_time - before_secs)
+                        task = asyncio.create_task(_send_reminder_at(request))
+                        self.task_map_all[guild_id].append(task)
+
+            self.logger.info(
+                f'{len(self.task_map_all[guild_id])} reminder tasks scheduled for guild "{self.bot.get_guild(guild_id)}"')
 
     def _reschedule_finalcall_tasks(self, guild_id):
-        if not self.finalcall_map[guild_id]:
-            return
+        if self.finalcall_map_div1[guild_id]:
+            pending_reschedule_div1 = []
+            for link, data in self.finalcall_map_div1[guild_id].items():
+                try:
+                    pending_reschedule_div1.append(data)
+                    task = self.finaltasks_div1[guild_id][link]
+                    task.cancel()
+                except KeyError:
+                    pass
 
-        pending_reschedule = []
-        for link, data in self.finalcall_map[guild_id].items():
-            try:
-                pending_reschedule.append(data)
-                task = self.finaltasks[guild_id][link]
-                task.cancel()
-            except KeyError:
-                pass
+            self.finalcall_map_div1[guild_id].clear()
+            for data in pending_reschedule_div1:
+                embed_desc, embed_fields = data.embed_desc, data.embed_fields
+                embed = discord_common.color_embed()
+                embed.description = embed_desc
+                for (name, value) in embed_fields:
+                    embed.add_field(name=name, value=value, inline=False)
+                link, start_time = self.get_values_from_embed(embed)
+                send_time = start_time - self.guild_map[guild_id].finalcall_before_div1 * 60
 
-        self.finalcall_map[guild_id].clear()
+                reaction_role = self.bot.get_guild(guild_id).get_role(data.role_id)
+                if reaction_role is not None:
+                    task = asyncio.create_task(
+                        self.send_finalcall_reminder(embed, guild_id, reaction_role, send_time, link, for_all = False))
+                    self.finalcall_map_div1[guild_id][link] = FinalCallRequest(role_id=reaction_role.id, embed=embed,
+                                                                          msg_id=data.msg_id)
+                    self.finaltasks_div1[guild_id][link] = task
 
-        for data in pending_reschedule:
-            embed_desc, embed_fields = data.embed_desc, data.embed_fields
-            embed = discord_common.color_embed()
-            embed.description = embed_desc
-            for (name, value) in embed_fields:
-                embed.add_field(name=name, value=value, inline=False)
-            link, start_time = self.get_values_from_embed(embed)
-            send_time = start_time - self.guild_map[guild_id].finalcall_before * 60
-            reaction_role = self.bot.get_guild(guild_id).get_role(data.role_id)
-            if reaction_role is not None:
-                task = asyncio.create_task(
-                    self.send_finalcall_reminder(embed, guild_id, reaction_role, send_time, link))
-                self.finalcall_map[guild_id][link] = FinalCallRequest(role_id=reaction_role.id, embed=embed,
-                                                                      msg_id=data.msg_id)
-                self.finaltasks[guild_id][link] = task
+            self.logger.info(
+                f'{len(self.finalcall_map_div1[guild_id])} div1 final calls scheduled for guild "{self.bot.get_guild(guild_id)}"')
 
-        self.logger.info(
-            f'{len(self.finalcall_map[guild_id])} final calls scheduled for guild "{self.bot.get_guild(guild_id)}"')
+        if self.finalcall_map_all[guild_id]:
+            pending_reschedule_all = []
+            for link, data in self.finalcall_map_all[guild_id].items():
+                try:
+                    pending_reschedule_all.append(data)
+                    task = self.finaltasks_all[guild_id][link]
+                    task.cancel()
+                except KeyError:
+                    pass
+
+            self.finalcall_map_all[guild_id].clear()
+            for data in pending_reschedule_all:
+                embed_desc, embed_fields = data.embed_desc, data.embed_fields
+                embed = discord_common.color_embed()
+                embed.description = embed_desc
+                for (name, value) in embed_fields:
+                    embed.add_field(name=name, value=value, inline=False)
+                link, start_time = self.get_values_from_embed(embed)
+                send_time = start_time - self.guild_map[guild_id].finalcall_before_all * 60
+                reaction_role = self.bot.get_guild(guild_id).get_role(data.role_id)
+                if reaction_role is not None:
+                    task = asyncio.create_task(
+                        self.send_finalcall_reminder(embed, guild_id, reaction_role, send_time, link, for_all = True))
+                    self.finalcall_map_all[guild_id][link] = FinalCallRequest(role_id=reaction_role.id, embed=embed,
+                                                                          msg_id=data.msg_id)
+                    self.finaltasks_all[guild_id][link] = task
+
+            self.logger.info(
+                f'{len(self.finalcall_map_all[guild_id])} all final calls scheduled for guild "{self.bot.get_guild(guild_id)}"')
 
     @staticmethod
     def _make_contest_pages(contests, title):
@@ -342,7 +448,7 @@ class Reminders(commands.Cog):
 
     def _serialize_guild_map(self):
         self.logger.info("Serializing db to local file")
-        data = {"guild_map": self.guild_map, "finalcall_map": self.finalcall_map}
+        data = {"guild_map": self.guild_map, "finalcall_map_div1": self.finalcall_map_div1, "finalcall_map_all": self.finalcall_map_all}
         out_path = Path(constants.GUILD_SETTINGS_MAP_PATH)
         with out_path.open(mode='wb') as out_file:
             pickle.dump(data, out_file)
@@ -354,7 +460,7 @@ class Reminders(commands.Cog):
 
         self.last_guild_backup_time = current_time_stamp
         out_path = Path(constants.GUILD_SETTINGS_MAP_PATH + "_" + str(current_time_stamp))
-        data = {"guild_map": self.guild_map, "finalcall_map": self.finalcall_map}
+        data = {"guild_map": self.guild_map, "finalcall_map_div1": self.finalcall_map_div1, "finalcall_map_all": self.finalcall_map_all}
         with out_path.open(mode='wb') as out_file:
             pickle.dump(data, out_file)
 
@@ -362,14 +468,14 @@ class Reminders(commands.Cog):
     async def remind(self, ctx):
         await ctx.send_help(ctx.command)
 
-    @remind.command(name='here', brief='Set reminder settings')
+    @remind.command(name='configure_div1', brief='Set reminder settings for div1')
     @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
-    async def set_remind_settings(self, ctx, role: discord.Role, *before: int):
-        """Sets reminder channel to current channel,
+    async def set_remind_settings_for_div1(self, ctx, role: discord.Role, *before: int):
+        """Sets reminder channel to current channel for div1,
         role to the given role, and reminder
         times to the given values in minutes.
 
-        e.g t;remind here @Subscriber 10 60 180
+        e.g t;remind configure_div1 @Subscriber 10 60 180
         """
         if not role.mentionable:
             raise RemindersCogError('The role for reminders must be mentionable')
@@ -378,19 +484,51 @@ class Reminders(commands.Cog):
 
         before = list(before)
         before = sorted(before, reverse=True)
-        self.guild_map[ctx.guild.id].remind_channel_id = ctx.channel.id
-        self.guild_map[ctx.guild.id].remind_role_id = role.id
-        self.guild_map[ctx.guild.id].remind_before = before
+        self.guild_map[ctx.guild.id].remind_channel_id_div1 = ctx.channel.id
+        self.guild_map[ctx.guild.id].remind_role_id_div1 = role.id
+        self.guild_map[ctx.guild.id].remind_before_div1 = before
 
-        remind_channel = ctx.guild.get_channel(self.guild_map[ctx.guild.id].remind_channel_id)
-        remind_role = ctx.guild.get_role(self.guild_map[ctx.guild.id].remind_role_id)
-        remind_before_str = f"At {', '.join(str(mins) for mins in self.guild_map[ctx.guild.id].remind_before)} " \
+        remind_channel = ctx.guild.get_channel(self.guild_map[ctx.guild.id].remind_channel_id_div1)
+        remind_role = ctx.guild.get_role(self.guild_map[ctx.guild.id].remind_role_id_div1)
+        remind_before_str = f"At {', '.join(str(mins) for mins in self.guild_map[ctx.guild.id].remind_before_div1)} " \
                             f"mins before contest "
 
         embed = discord_common.embed_success('Reminder settings saved successfully')
-        embed.add_field(name='Reminder channel', value=remind_channel.mention)
-        embed.add_field(name='Reminder Role', value=remind_role.mention)
-        embed.add_field(name='Reminder Before', value=remind_before_str)
+        embed.add_field(name='Reminder channel for div1', value=remind_channel.mention)
+        embed.add_field(name='Reminder Role for div1', value=remind_role.mention)
+        embed.add_field(name='Reminder Before for div1', value=remind_before_str)
+
+        await ctx.send(embed=embed)
+
+    @remind.command(name='configure', brief='Set reminder settings')
+    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
+    async def set_remind_settings(self, ctx, role: discord.Role, *before: int):
+        """Sets reminder channel to current channel for all,
+        role to the given role, and reminder
+        times to the given values in minutes.
+
+        e.g t;remind configure @Subscriber 10 60 180
+        """
+        if not role.mentionable:
+            raise RemindersCogError('The role for reminders must be mentionable')
+        if not before or any(before_mins < 0 for before_mins in before):
+            raise RemindersCogError('Please provide valid `before` values')
+
+        before = list(before)
+        before = sorted(before, reverse=True)
+        self.guild_map[ctx.guild.id].remind_channel_id_all = ctx.channel.id
+        self.guild_map[ctx.guild.id].remind_role_id_all = role.id
+        self.guild_map[ctx.guild.id].remind_before_all = before
+
+        remind_channel = ctx.guild.get_channel(self.guild_map[ctx.guild.id].remind_channel_id_all)
+        remind_role = ctx.guild.get_role(self.guild_map[ctx.guild.id].remind_role_id_all)
+        remind_before_str = f"At {', '.join(str(mins) for mins in self.guild_map[ctx.guild.id].remind_before_all)} " \
+                            f"mins before contest "
+
+        embed = discord_common.embed_success('Reminder settings saved successfully')
+        embed.add_field(name='Reminder channel for all', value=remind_channel.mention)
+        embed.add_field(name='Reminder Role for all', value=remind_role.mention)
+        embed.add_field(name='Reminder Before for all', value=remind_before_str)
 
         await ctx.send(embed=embed)
 
@@ -399,10 +537,11 @@ class Reminders(commands.Cog):
     async def reset_subscriptions(self, ctx):
         """ Resets the judges settings to the default ones.
         """
-        self.guild_map[ctx.guild.id].website_patterns = copy.deepcopy(website_schema.schema)
+        self.guild_map[ctx.guild.id].subscribed_websites_div1 = set()
+        self.guild_map[ctx.guild.id].subscribed_websites_all = set()
         await ctx.send(embed=discord_common.embed_success('Succesfully reset the subscriptions to the default ones'))
 
-    def _set_guild_setting(self, guild_id, websites, unsubscribe):
+    def _set_guild_setting(self, guild_id, websites, unsubscribe, for_all):
 
         guild_settings = self.guild_map[guild_id]
         supported_websites, unsupported_websites = [], []
@@ -411,14 +550,63 @@ class Reminders(commands.Cog):
                 unsupported_websites.append(website)
                 continue
 
-            guild_settings.website_patterns[website].allowed_patterns = [] if unsubscribe else \
-                copy.deepcopy(website_schema.schema[website].allowed_patterns)
-            guild_settings.website_patterns[website].disallowed_patterns = [''] if unsubscribe else \
-                copy.deepcopy(website_schema.schema[website].disallowed_patterns)
+            if unsubscribe:
+                if not for_all:
+                    guild_settings.subscribed_websites_div1.discard(website)
+                else:
+                    guild_settings.subscribed_websites_all.discard(website)
+            else:
+                if not for_all:
+                    guild_settings.subscribed_websites_div1.add(website)
+                else:
+                    guild_settings.subscribed_websites_all.add(website)
+
             supported_websites.append(website)
 
         self.guild_map[guild_id] = guild_settings
         return supported_websites, unsupported_websites
+
+    @remind.command(brief='Start div1 contest reminders from websites.')
+    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
+    async def subscribe_div1(self, ctx, *websites: str):
+        """Start contest reminders from websites."""
+
+        if all(website not in website_schema.schema for website in websites):
+            supported_websites = ", ".join(website_schema.supported_websites)
+            embed = discord_common.embed_alert(
+                f'None of these websites are supported for div1 contest reminders.'
+                f'\nSupported websites -\n {supported_websites}.')
+        else:
+            guild_id = ctx.guild.id
+            subscribed, unsupported = self._set_guild_setting(guild_id, websites, unsubscribe = False, for_all = False)
+            subscribed_websites_str = ", ".join(subscribed)
+            unsupported_websites_str = ", ".join(unsupported)
+            success_str = f'Successfully subscribed from  {subscribed_websites_str} for div1 contest reminders.'
+            success_str += f'\n{unsupported_websites_str} {"are" if len(unsupported) > 1 else "is"} \
+                not supported.' if unsupported_websites_str else ""
+            embed = discord_common.embed_success(success_str)
+        await ctx.send(embed=embed)
+
+    @remind.command(brief='Stop div1 contest reminders from websites.')
+    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
+    async def unsubscribe_div1(self, ctx, *websites: str):
+        """Stop contest reminders from websites."""
+
+        if all(website not in website_schema.schema for website in websites):
+            supported_websites = ", ".join(website_schema.supported_websites)
+            embed = discord_common.embed_alert(f'None of these websites are supported for div1 contest reminders.'
+                                               f'\nSupported websites -\n {supported_websites}.')
+        else:
+            guild_id = ctx.guild.id
+            unsubscribed, unsupported = self._set_guild_setting(guild_id, websites, unsubscribe = True, for_all = False)
+            unsubscribed_websites_str = ", ".join(unsubscribed)
+            unsupported_websites_str = ", ".join(unsupported)
+            success_str = f'Successfully unsubscribed from {unsubscribed_websites_str} for div1 contest reminders.'
+            success_str += f'\n{unsupported_websites_str} \
+                {"are" if len(unsupported) > 1 else "is"} \
+                not supported.' if unsupported_websites_str else ""
+            embed = discord_common.embed_success(success_str)
+        await ctx.send(embed=embed)
 
     @remind.command(brief='Start contest reminders from websites.')
     @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
@@ -426,13 +614,13 @@ class Reminders(commands.Cog):
         """Start contest reminders from websites."""
 
         if all(website not in website_schema.schema for website in websites):
-            supported_websites = ", ".join(website_schema.schema)
+            supported_websites = ", ".join(website_schema.supported_websites)
             embed = discord_common.embed_alert(
                 f'None of these websites are supported for contest reminders.'
                 f'\nSupported websites -\n {supported_websites}.')
         else:
             guild_id = ctx.guild.id
-            subscribed, unsupported = self._set_guild_setting(guild_id, websites, False)
+            subscribed, unsupported = self._set_guild_setting(guild_id, websites, unsubscribe = False, for_all = True)
             subscribed_websites_str = ", ".join(subscribed)
             unsupported_websites_str = ", ".join(unsupported)
             success_str = f'Successfully subscribed from  {subscribed_websites_str} for contest reminders.'
@@ -447,12 +635,12 @@ class Reminders(commands.Cog):
         """Stop contest reminders from websites."""
 
         if all(website not in website_schema.schema for website in websites):
-            supported_websites = ", ".join(website_schema.schema)
+            supported_websites = ", ".join(website_schema.supported_websites)
             embed = discord_common.embed_alert(f'None of these websites are supported for contest reminders.'
                                                f'\nSupported websites -\n {supported_websites}.')
         else:
             guild_id = ctx.guild.id
-            unsubscribed, unsupported = self._set_guild_setting(guild_id, websites, True)
+            unsubscribed, unsupported = self._set_guild_setting(guild_id, websites, unsubscribe = True, for_all = True)
             unsubscribed_websites_str = ", ".join(unsubscribed)
             unsupported_websites_str = ", ".join(unsupported)
             success_str = f'Successfully unsubscribed from {unsubscribed_websites_str} for contest reminders.'
@@ -480,29 +668,49 @@ class Reminders(commands.Cog):
         """
         await ctx.send_help(ctx.command)
 
+    @clist.command(brief='List future div1 contests')
+    async def future_div1(self, ctx, *filters):
+        """List future contests."""
+        contests = filter_contests(filters, self.get_guild_contests(self.future_contests_div1, ctx.guild.id)[0])
+        await self._send_contest_list(ctx, contests, title='Future div1 contests', empty_msg='No future div1 contests scheduled')
+
+    @clist.command(brief='List active div1 contests')
+    async def active_div1(self, ctx, *filters):
+        """List active contests."""
+        contests = filter_contests(filters, self.get_guild_contests(self.active_contests_div1, ctx.guild.id)[0])
+        await self._send_contest_list(ctx, contests, title='Active div1 contests', empty_msg='No div1 contests currently active')
+
+    @clist.command(brief='List recent div1 finished contests')
+    async def finished_div1(self, ctx, *filters):
+        """List recently concluded contests."""
+        contests = filter_contests(filters, self.get_guild_contests(self.finished_contests_div1, ctx.guild.id)[0])
+        await self._send_contest_list(ctx, contests, title='Recently finished div1 contests',
+                                      empty_msg='No finished contests found')
+
     @clist.command(brief='List future contests')
     async def future(self, ctx, *filters):
-        """List future contests.
-        """
-        contests = filter_contests(filters, self.get_guild_contests(self.future_contests, ctx.guild.id))
+        """List future contests."""
+        contests = filter_contests(filters, self.get_guild_contests(self.future_contests_all, ctx.guild.id)[1])
         await self._send_contest_list(ctx, contests, title='Future contests', empty_msg='No future contests scheduled')
 
     @clist.command(brief='List active contests')
     async def active(self, ctx, *filters):
         """List active contests."""
-        contests = filter_contests(filters, self.get_guild_contests(self.active_contests, ctx.guild.id))
+        contests = filter_contests(filters, self.get_guild_contests(self.active_contests_all, ctx.guild.id)[1])
         await self._send_contest_list(ctx, contests, title='Active contests', empty_msg='No contests currently active')
 
     @clist.command(brief='List recent finished contests')
     async def finished(self, ctx, *filters):
         """List recently concluded contests."""
-        contests = filter_contests(filters, self.get_guild_contests(self.finished_contests, ctx.guild.id))
+        contests = filter_contests(filters, self.get_guild_contests(self.finished_contests_all, ctx.guild.id)[1])
         await self._send_contest_list(ctx, contests, title='Recently finished contests',
                                       empty_msg='No finished contests found')
 
-    async def send_finalcall_reminder(self, embed, guild_id, role, send_time, link):
+    async def send_finalcall_reminder(self, embed, guild_id, role, send_time, link, for_all):
         send_msg = "GLHF!"
         settings = self.guild_map[guild_id]
+        finalcall_before = settings.finalcall_before_div1 if not for_all else settings.finalcall_before_all
+        finalcall_channel_id = settings.finalcall_channel_id_div1 if not for_all else settings.finalcall_channel_id_all
 
         # sleep till the ping time
         delay = send_time - dt.datetime.now().timestamp()
@@ -514,26 +722,37 @@ class Reminders(commands.Cog):
                 return tmp if value == 1 else tmp + 's'
 
             labels = 'day hr min sec'.split()
-            values = discord_common.time_format(settings.finalcall_before * 60)
+            values = discord_common.time_format(finalcall_before * 60)
             before_str = ' '.join(make(value, label) for label, value in zip(labels, values) if value > 0)
             desc = f'About to start in {before_str}!'
             embed.description = desc
-            channel = self.bot.get_channel(settings.finalcall_channel_id)
+            channel = self.bot.get_channel(finalcall_channel_id)
             msg = await channel.send(role.mention + " " + send_msg, embed=embed)
-            self.finalcall_map[guild_id][link].msg_id = msg.id
+            if not for_all:
+                self.finalcall_map_div1[guild_id][link].msg_id = msg.id
+            else:
+                self.finalcall_map_all[guild_id][link].msg_id = msg.id
             self._serialize_guild_map()
 
         # sleep till contest starts
-        time_to_contest = max(0, send_time + settings.finalcall_before * 60 - dt.datetime.utcnow().timestamp())
+        time_to_contest = max(0, send_time + finalcall_before * 60 - dt.datetime.utcnow().timestamp())
         await asyncio.sleep(time_to_contest)
 
         # delete role and task
-        if link in self.finalcall_map[guild_id]:
-            msg_id = self.finalcall_map[guild_id][link].msg_id
-            message = await self.bot.get_channel(settings.finalcall_channel_id).fetch_message(msg_id)
-            await message.edit(content=send_msg)
-            del self.finalcall_map[guild_id][link]
-            del self.finaltasks[guild_id][link]
+        if not for_all:
+            if link in self.finalcall_map_div1[guild_id]:
+                msg_id = self.finalcall_map_div1[guild_id][link].msg_id
+                message = await self.bot.get_channel(finalcall_channel_id).fetch_message(msg_id)
+                await message.edit(content=send_msg)
+                del self.finalcall_map_div1[guild_id][link]
+                del self.finaltasks_div1[guild_id][link]
+        else:
+            if link in self.finalcall_map_all[guild_id]:
+                msg_id = self.finalcall_map_all[guild_id][link].msg_id
+                message = await self.bot.get_channel(finalcall_channel_id).fetch_message(msg_id)
+                await message.edit(content=send_msg)
+                del self.finalcall_map_all[guild_id][link]
+                del self.finaltasks_all[guild_id][link]
         if role is not None:
             await role.delete()
         self._serialize_guild_map()
@@ -545,34 +764,49 @@ class Reminders(commands.Cog):
         start_time = int(re.findall(r'<t:(\d+):[A-za-z]>', desc)[0])
         return link, start_time
 
-    async def create_finalcall_role(self, guild_id, embed):
+    async def create_finalcall_role(self, guild_id, embed, for_all):
         contest_name = embed.fields[0].name
-        name = f"Final Call - {contest_name}"
-        role = await self.bot.get_guild(guild_id).create_role(name=name)
+        name = f"Final Call {'(Div1)' if not for_all else '(All)'} - {contest_name}"
+        role = await self.bot.get_guild(guild_id).create_role(name=name, mentionable=True)
         return role
 
-    async def get_finalcall_taskrole(self, guild_id, embed, remove=False):
+    async def get_finalcall_taskrole(self, guild_id, embed, remove, for_all):
         guild = self.bot.get_guild(guild_id)
         link, start_time = self.get_values_from_embed(embed)
-        send_time = start_time - self.guild_map[guild_id].finalcall_before * 60
+        finalcall_before = self.guild_map[guild_id].finalcall_before_div1 if not for_all else self.guild_map[guild_id].finalcall_before_all
+        send_time = start_time - finalcall_before * 60
 
-        if link in self.finalcall_map[guild_id]:
-            reaction_role = guild.get_role(self.finalcall_map[guild_id][link].role_id)
-        elif (not remove) and send_time > dt.datetime.utcnow().timestamp():
-            reaction_role = await self.create_finalcall_role(guild_id, embed)
-            task = asyncio.create_task(self.send_finalcall_reminder(embed, guild_id, reaction_role, send_time, link))
-            self.finalcall_map[guild_id][link] = FinalCallRequest(embed=embed, role_id=reaction_role.id)
-            self.finaltasks[guild_id][link] = task
+        if not for_all:
+            if link in self.finalcall_map_div1[guild_id]:
+                reaction_role = guild.get_role(self.finalcall_map_div1[guild_id][link].role_id)
+            elif (not remove) and send_time > dt.datetime.utcnow().timestamp():
+                reaction_role = await self.create_finalcall_role(guild_id, embed, for_all)
+                task = asyncio.create_task(self.send_finalcall_reminder(embed, guild_id, reaction_role, send_time, link, for_all = False))
+                self.finalcall_map_div1[guild_id][link] = FinalCallRequest(embed=embed, role_id=reaction_role.id)
+                self.finaltasks_div1[guild_id][link] = task
+            else:
+                reaction_role = None
         else:
-            reaction_role = None
+            if link in self.finalcall_map_all[guild_id]:
+                reaction_role = guild.get_role(self.finalcall_map_all[guild_id][link].role_id)
+            elif (not remove) and send_time > dt.datetime.utcnow().timestamp():
+                reaction_role = await self.create_finalcall_role(guild_id, embed, for_all)
+                task = asyncio.create_task(self.send_finalcall_reminder(embed, guild_id, reaction_role, send_time, link, for_all = True))
+                self.finalcall_map_all[guild_id][link] = FinalCallRequest(embed=embed, role_id=reaction_role.id)
+                self.finaltasks_all[guild_id][link] = task
+            else:
+                reaction_role = None
 
         return reaction_role
 
-    async def do_validation_check(self, payload):
+    async def do_validation_check(self, payload, for_all):
         settings = self.guild_map[payload.guild_id]
         member = self.bot.get_guild(payload.guild_id).get_member(payload.user_id)
-        if member.bot or settings.remind_channel_id is None or settings.remind_channel_id != payload.channel_id \
-            or payload.emoji.name != self.reaction_emoji or settings.finalcall_channel_id is None:
+        remind_channel_id = settings.remind_channel_id_div1 if not for_all else settings.remind_channel_id_all
+        finalcall_channel_id = settings.finalcall_channel_id_div1 if not for_all else settings.finalcall_channel_id_all
+
+        if member.bot or remind_channel_id is None or remind_channel_id != payload.channel_id \
+            or payload.emoji.name != self.reaction_emoji or finalcall_channel_id is None:
             return None
 
         channel = self.bot.get_channel(payload.channel_id)
@@ -589,19 +823,23 @@ class Reminders(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
-        response = await self.do_validation_check(payload)
+        for_all = payload.channel_id == self.guild_map[payload.guild_id].remind_channel_id_all
+
+        response = await self.do_validation_check(payload, for_all)
         if response is None:
             return
 
+        settings = self.guild_map[payload.guild_id]
+
         _, embed = response
         _, start_time = self.get_values_from_embed(embed)
-        send_time = start_time - self.guild_map[payload.guild_id].finalcall_before * 60
+        finalcall_before = settings.finalcall_before_div1 if not for_all else settings.finalcall_before_all
+        send_time = start_time - finalcall_before * 60
 
         if send_time < dt.datetime.utcnow().timestamp():
             return
 
-        settings = self.guild_map[payload.guild_id]
-        reaction_role = await self.get_finalcall_taskrole(payload.guild_id, embed)
+        reaction_role = await self.get_finalcall_taskrole(payload.guild_id, embed, remove = False, for_all = for_all)
         member = self.bot.get_guild(payload.guild_id).get_member(payload.user_id)
         self.logger.info(
             f'{member} reacted for {reaction_role} which will be sent at {datetime.fromtimestamp(send_time)}')
@@ -610,116 +848,101 @@ class Reminders(commands.Cog):
         self._serialize_guild_map()
         try:
             await member_dm.send(f"Final Call Alarm Set. You are alloted `{reaction_role.name}` which will be pinged"
-                                 f" {settings.finalcall_before} mins before the contest")
+                                 f" {finalcall_before} mins before the contest")
         except:
             await self.victim_card(member)
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload):
-        response = await self.do_validation_check(payload)
+        for_all = payload.channel_id == self.guild_map[payload.guild_id].remind_channel_id_all
+
+        response = await self.do_validation_check(payload, for_all)
         if response is None:
             return
 
         reaction_count, embed = response
-        reaction_role = await self.get_finalcall_taskrole(payload.guild_id, embed, True)
+        reaction_role = await self.get_finalcall_taskrole(payload.guild_id, embed, remove = True, for_all = for_all)
 
         link, _ = self.get_values_from_embed(embed)
         if reaction_role is None:
-            assert link not in self.finalcall_map[payload.guild_id]
+            assert link not in (self.finalcall_map_div1[payload.guild_id] if not for_all else self.finalcall_map_all[payload.guild_id])
             return
 
         member = self.bot.get_guild(payload.guild_id).get_member(payload.user_id)
-        self.logger.info(f'{member} unreacted for {reaction_role.name}')
+        self.logger.info(f'{member} unreacted for {reaction_role.name} {"(div1)" if not for_all else "(all)"}')
         await member.remove_roles(reaction_role)
         member_dm = await member.create_dm()
         try:
-            await member_dm.send(f"Final Call Alarm Cleared for '{reaction_role.name}'")
+            await member_dm.send(f"Final Call Alarm Cleared for '{reaction_role.name}' {'(div1)' if not for_all else '(all)'}")
         except:
             await self.victim_card(member)
 
         if reaction_count == 1:
-            if link in self.finalcall_map[payload.guild_id]:
-                self.finaltasks[payload.guild_id][link].cancel()
-                del self.finalcall_map[payload.guild_id][link]
-                del self.finaltasks[payload.guild_id][link]
+            if not for_all:
+                if link in self.finalcall_map_div1[payload.guild_id]:
+                    self.finaltasks_div1[payload.guild_id][link].cancel()
+                    del self.finalcall_map_div1[payload.guild_id][link]
+                    del self.finaltasks_div1[payload.guild_id][link]
+            else:
+                if link in self.finalcall_map_all[payload.guild_id]:
+                    self.finaltasks_all[payload.guild_id][link].cancel()
+                    del self.finalcall_map_all[payload.guild_id][link]
+                    del self.finaltasks_all[payload.guild_id][link]
             await reaction_role.delete()
         self._serialize_guild_map()
-
-    #  Nope React Command Group
-    @commands.group(brief="Manage reactions in case of no reacts", invoke_without_command=True)
-    @commands.has_role('Prabh')
-    async def lastreact(self, ctx):
-        await ctx.send_help(ctx.command)
-
-    @lastreact.command(name='enable', brief='Enable auto nope react')
-    @commands.has_role('Prabh')
-    async def enable_lastreact(self, ctx):
-        self.guild_map[ctx.guild.id].auto_nope_react = True
-        await ctx.send(embed=discord_common.embed_success('Enabled auto nope react'))
-
-    @lastreact.command(name='disable', brief='Disable auto nope react')
-    @commands.has_role('Prabh')
-    async def disable_lastreact(self, ctx):
-        self.guild_map[ctx.guild.id].auto_nope_react = False
-        await ctx.send(embed=discord_common.embed_success('Disabled auto nope react'))
-
-    #  Self First React Command Group
-    @commands.group(brief="Manage reactions for self first react`", invoke_without_command=True)
-    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
-    async def firstreact(self, ctx):
-        await ctx.send_help(ctx.command)
-
-    @firstreact.command(name='enable', brief='Enable self first react')
-    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
-    async def enable_firstreact(self, ctx):
-        self.guild_map[ctx.guild.id].add_first_reaction = True
-        await ctx.send(embed=discord_common.embed_success('Enabled self first react'))
-
-    @firstreact.command(name='disable', brief='Disable self first react')
-    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
-    async def disable_firstreact(self, ctx):
-        self.guild_map[ctx.guild.id].add_first_reaction = False
-        await ctx.send(embed=discord_common.embed_success('Disabled self first react'))
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.guild is None:
             return
         settings = self.guild_map[message.guild.id]
-        if message.channel.id != settings.remind_channel_id or not message.embeds:
+        for_all = message.channel.id == settings.remind_channel_id_all
+        remind_channel_id = settings.remind_channel_id_div1 if not for_all else settings.remind_channel_id_all
+        if message.channel.id != remind_channel_id or not message.embeds:
             return
 
-        remind_role = self.bot.get_guild(message.guild.id).get_role(settings.remind_role_id)
-        if settings.add_first_reaction and remind_role in message.role_mentions:
+        remind_role_id = settings.remind_role_id_div1 if not for_all else settings.remind_role_id_all
+        remind_role = self.bot.get_guild(message.guild.id).get_role(remind_role_id)
+        if remind_role in message.role_mentions:
             await message.add_reaction(self.reaction_emoji)
-
-        if settings.auto_nope_react:
-            _, start_time = self.get_values_from_embed(message.embeds[0])
-            delay = start_time - dt.datetime.utcnow().timestamp() + 300
-            await asyncio.sleep(delay)
-            message = await self.bot.get_channel(message.channel.id).fetch_message(message.id)
-            if not message.reactions:
-                await message.add_reaction(self.bot.get_emoji(self.nope_emoji))
 
     @commands.group(brief="Manage Final Call Reminder", invoke_without_command=True)
     async def final(self, ctx):
         await ctx.send_help(ctx.command)
 
-    @final.command(name='here', brief='Set channel for final call')
+    @final.command(name='configure_div1', brief='Set channel for the div1 final call')
+    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
+    async def set_finalcall_settings_div1(self, ctx, before: int):
+        if not before or before < 0:
+            raise RemindersCogError('Please provide valid `before` values')
+
+        self.guild_map[ctx.guild.id].finalcall_before_div1 = before
+        self.guild_map[ctx.guild.id].finalcall_channel_id_div1 = ctx.channel.id
+
+        finalcall_channel = ctx.guild.get_channel(self.guild_map[ctx.guild.id].finalcall_channel_id_div1)
+
+        embed = discord_common.embed_success('Final call settings for division 1 saved successfully')
+        embed.add_field(name='Final Call Channel (Div1)', value=finalcall_channel.mention)
+        embed.add_field(name='Final Call Before (Div1)',
+                        value=f"{self.guild_map[ctx.guild.id].finalcall_before_div1} mins before contest")
+
+        await ctx.send(embed=embed)
+
+    @final.command(name='configure', brief='Set channel for the final call')
     @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
     async def set_finalcall_settings(self, ctx, before: int):
         if not before or before < 0:
             raise RemindersCogError('Please provide valid `before` values')
 
-        self.guild_map[ctx.guild.id].finalcall_before = before
-        self.guild_map[ctx.guild.id].finalcall_channel_id = ctx.channel.id
+        self.guild_map[ctx.guild.id].finalcall_before_all = before
+        self.guild_map[ctx.guild.id].finalcall_channel_id_all = ctx.channel.id
 
-        finalcall_channel = ctx.guild.get_channel(self.guild_map[ctx.guild.id].finalcall_channel_id)
+        finalcall_channel = ctx.guild.get_channel(self.guild_map[ctx.guild.id].finalcall_channel_id_all)
 
-        embed = discord_common.embed_success('Final Call Settings Saved Successfully')
-        embed.add_field(name='Final Call channel', value=finalcall_channel.mention)
-        embed.add_field(name='Final Call Before',
-                        value=f"{self.guild_map[ctx.guild.id].finalcall_before} mins before contest")
+        embed = discord_common.embed_success('Final call settings for all saved successfully')
+        embed.add_field(name='Final Call Channel (All)', value=finalcall_channel.mention)
+        embed.add_field(name='Final Call Before (All)',
+                        value=f"{self.guild_map[ctx.guild.id].finalcall_before_all} mins before contest")
 
         await ctx.send(embed=embed)
 
@@ -728,50 +951,47 @@ class Reminders(commands.Cog):
         """Shows the current settings for the guild"""
         settings = self.guild_map[ctx.guild.id]
 
-        remind_channel = ctx.guild.get_channel(settings.remind_channel_id)
-        remind_role = ctx.guild.get_role(settings.remind_role_id)
+        for for_all in [False, True]:
+            remind_channel = ctx.guild.get_channel(settings.remind_channel_id_div1 if not for_all else settings.remind_channel_id_all)
+            remind_role = ctx.guild.get_role(settings.remind_role_id_div1 if not for_all else settings.remind_role_id_all)
+            finalcall_channel = ctx.guild.get_channel(settings.finalcall_channel_id_div1 if not for_all else settings.finalcall_channel_id_all)
+            subscribed_websites_str = ", ".join(settings.subscribed_websites_div1 if not for_all else settings.subscribed_websites_all)
 
-        finalcall_channel = ctx.guild.get_channel(settings.finalcall_channel_id)
+            remind_before_str = "Not Set"
+            final_before_str = "Not Set"
+            remind_before = settings.remind_before_div1 if not for_all else settings.remind_before_all
+            if remind_before is not None:
+                remind_before_str = f"At {', '.join(str(before_mins) for before_mins in remind_before)}" \
+                                    f" mins before contest"
+            finalcall_before = settings.finalcall_before_div1 if not for_all else settings.finalcall_before_all
+            if finalcall_before is not None:
+                final_before_str = f"At {finalcall_before} mins before contest"
+            embed = discord_common.embed_success(f'Current {"div1 " if not for_all else ""}settings')
 
-        subscribed_websites = []
-        for website, data in settings.website_patterns.items():
-            if data.allowed_patterns:
-                subscribed_websites.append(website)
-        subscribed_websites_str = ", ".join(subscribed_websites)
+            if remind_channel is not None:
+                embed.add_field(name='Remind Channel', value=remind_channel.mention)
+            else:
+                embed.add_field(name='Remind Channel', value="Not Set")
 
-        remind_before_str = "Not Set"
-        final_before_str = "Not Set"
-        if settings.remind_before is not None:
-            remind_before_str = f"At {', '.join(str(before_mins) for before_mins in settings.remind_before)}" \
-                                f" mins before contest"
-        if settings.finalcall_before is not None:
-            final_before_str = f"At {settings.finalcall_before} mins before contest"
-        embed = discord_common.embed_success(f'Current settings')
+            if remind_role is not None:
+                embed.add_field(name='Remind Role', value=remind_role.mention)
+            else:
+                embed.add_field(name='Remind Role', value="Not Set")
 
-        if remind_channel is not None:
-            embed.add_field(name='Remind Channel', value=remind_channel.mention)
-        else:
-            embed.add_field(name='Remind Channel', value="Not Set")
+            embed.add_field(name='Remind Before', value=remind_before_str)
 
-        if remind_role is not None:
-            embed.add_field(name='Remind Role', value=remind_role.mention)
-        else:
-            embed.add_field(name='Remind Role', value="Not Set")
+            if finalcall_channel is not None:
+                embed.add_field(name='Final Call Channel', value=finalcall_channel.mention)
+            else:
+                embed.add_field(name='Final Call Channel', value="Not Set")
 
-        embed.add_field(name='Remind Before', value=remind_before_str)
+            embed.add_field(name='Final Call Before', value=final_before_str)
+            embed.add_field(name="\u200b", value="\u200b")
 
-        if finalcall_channel is not None:
-            embed.add_field(name='Final Call Channel', value=finalcall_channel.mention)
-        else:
-            embed.add_field(name='Final Call Channel', value="Not Set")
+            embed.add_field(name='Subscribed websites', value=f'{subscribed_websites_str}', inline=False)
 
-        embed.add_field(name='Final Call Before', value=final_before_str)
-        embed.add_field(name="\u200b", value="\u200b")
-
-        embed.add_field(name='Subscribed websites', value=f'{subscribed_websites_str}', inline=False)
-
-        embed.set_footer(text=ctx.guild.name, icon_url=ctx.guild.icon)
-        await ctx.send(embed=embed)
+            embed.set_footer(text=ctx.guild.name, icon_url=ctx.guild.icon)
+            await ctx.send(embed=embed)
 
     @discord_common.send_error_if(RemindersCogError)
     async def cog_command_error(self, ctx, error):

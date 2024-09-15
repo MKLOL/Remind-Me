@@ -4,15 +4,12 @@ import re
 
 class WebsitePatterns:
     def __init__(self, *,
-                 _allowed_patterns=None,
-                 _disallowed_patterns=None,
+                 _is_matched=lambda website, for_all = True: False,
                  _shorthands=None,
                  _prefix="",
                  _normalize_regex=".*",
                  _rare=False):
-
-        self.allowed_patterns = _allowed_patterns or []
-        self.disallowed_patterns = _disallowed_patterns or []
+        self.is_matched = _is_matched
         self.shorthands = _shorthands or []
         self.prefix = _prefix
         self._normalize_regex = _normalize_regex
@@ -25,66 +22,97 @@ class WebsitePatterns:
             pass
         return name
 
-
-# Todo : Move this to external db
+# Todo : Move these to external db
+supported_websites = ['codeforces.com', 'codechef.com', 'atcoder.jp', 'facebook.com/hackercup', 'tlx.toki.id']
 schema = defaultdict(WebsitePatterns)
 
+def _is_matched_for_codeforces(name, for_all = True):
+    name = name.lower()
+    
+    for bad_pattern in ['wild', 'fools', 'kotlin', 'unrated', 'icpc', 'challenge']:
+        if bad_pattern in name:
+            return False
+
+    if not for_all:
+
+        for good_pattern in ['div. 1', 'rated for all', 'rated for both', 'rated for everyone']:
+            if good_pattern in name:
+                return True
+
+        for bad_pattern in ['educational', 'div. 2', 'div. 3', 'div. 4']:
+            if bad_pattern in name:
+                return False
+
+    return True
+
 schema['codeforces.com'] = WebsitePatterns(
-    _allowed_patterns=[''],
-    _disallowed_patterns=['wild', 'fools', 'kotlin', 'unrated'],
+    _is_matched=_is_matched_for_codeforces,
     _shorthands=['cf', 'codeforces'],
     _prefix='CodeForces',
 )
 
+def _is_matched_for_codechef(name, for_all = True):
+    name = name.lower()
+
+    # for bad_pattern in ['unrated']:
+    #     if bad_pattern in name:
+    #         return False
+
+    # if all(must_pattern not in name for must_pattern in ['rated']):
+    #     return False
+
+    # if not for_all:
+    #     if all(must_pattern not in name for must_pattern in ['7 star', '7 stars', '7-star', '7-stars', 'rated till 7', 'rated for all']):
+    #         return False
+
+    return for_all
+
 schema['codechef.com'] = WebsitePatterns(
-    _allowed_patterns=['lunch', 'cook', 'starters', 'rated'],
-    _disallowed_patterns=['unrated', 'long'],
+    _is_matched=_is_matched_for_codechef,
     _shorthands=['cc', 'codechef'],
     _prefix='CodeChef',
 )
 
+def _is_matched_for_atcoder(name, for_all = True):
+    name = name.lower()
+
+    if all(must_pattern not in name for must_pattern in ['abc:', 'beginner', 'arc:', 'regular', 'agc:', 'grand']):
+        return False
+
+    if not for_all:
+        if all(must_pattern not in name for must_pattern in ['arc:', 'regular', 'agc:', 'grand']):
+            return False
+
+    return True
+
 schema['atcoder.jp'] = WebsitePatterns(
-    _allowed_patterns=['abc:', 'arc:', 'agc:', 'grand', 'beginner', 'regular'],
-    _disallowed_patterns=[],
+    _is_matched=_is_matched_for_atcoder,
     _shorthands=['ac', 'atcoder'],
     _prefix='AtCoder',
     _normalize_regex="AtCoder .* Contest [0-9]+"
 )
 
-schema['codingcompetitions.withgoogle.com'] = WebsitePatterns(
-    _allowed_patterns=[''],
-    _disallowed_patterns=['registration', 'coding practice'],
-    _shorthands=['google'],
-    _prefix='Google',
-    _rare=True
-)
-
-schema['usaco.org'] = WebsitePatterns(
-    _allowed_patterns=[''],
-    _disallowed_patterns=[],
-    _shorthands=['usaco'],
-    _prefix='USACO',
-    _rare=True
-)
+def _is_matched_for_hackercup(name, for_all = True):
+    return True
 
 schema['facebook.com/hackercup'] = WebsitePatterns(
-    _allowed_patterns=[''],
-    _disallowed_patterns=[],
+    _is_matched=_is_matched_for_hackercup,
     _shorthands=['hackercup', 'fbhc'],
     _prefix='Meta Hackercup',
     _rare=True
 )
 
-schema['leetcode.com'] = WebsitePatterns(
-    _allowed_patterns=[''],
-    _disallowed_patterns=[],
-    _shorthands=['leetcode', 'lc'],
-    _prefix='LeetCode'
-)
+def _is_matched_for_troc(name, for_all = True):
+    name = name.lower()
+
+    if all(must_pattern not in name for must_pattern in ['TLX Regular Open Contest', 'TROC']):
+        return False
+
+    return True
 
 schema['tlx.toki.id'] = WebsitePatterns(
-    _allowed_patterns=['TLX Regular Open Contest', 'TROC'],
-    _disallowed_patterns=[],
+    _is_matched=_is_matched_for_troc,
     _shorthands=['toki', 'troc'],
-    _prefix='TOKI Regular Open Contest'
+    _prefix='TOKI Regular Open Contest',
+    _rare=True
 )

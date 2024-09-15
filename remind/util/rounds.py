@@ -1,3 +1,4 @@
+import logging
 import datetime as dt
 from remind.util import website_schema
 
@@ -28,17 +29,15 @@ class Round:
         schema = website_schema.schema[self.website]
         return schema.rare
 
-    def is_desired(self, websites):
+    def is_desired_for_div1(self, subscribed_websites):
+        if self.website not in subscribed_websites:
+            return False
+        return website_schema.schema[self.website].is_matched(self.name, for_all = False)
 
-        for disallowed_pattern in websites[self.website].disallowed_patterns:
-            if disallowed_pattern in self.name.lower():
-                return False
-
-        for allowed_pattern in websites[self.website].allowed_patterns:
-            if allowed_pattern in self.name.lower():
-                return True
-
-        return False
+    def is_desired_for_all(self, subscribed_websites):
+        if self.website not in subscribed_websites:
+            return False
+        return website_schema.schema[self.website].is_matched(self.name, for_all = True)
 
     def __repr__(self):
         return "Round - " + self.name
