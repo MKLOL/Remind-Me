@@ -29,12 +29,11 @@ schema = defaultdict(WebsitePatterns)
 def _is_matched_for_codeforces(name, for_all = True):
     name = name.lower()
     
-    for bad_pattern in ['wild', 'fools', 'kotlin', 'unrated', 'icpc', 'challenge']:
+    for bad_pattern in ['wild', 'fools', 'kotlin', 'unrated', 'icpc']:
         if bad_pattern in name:
             return False
 
     if not for_all:
-
         for good_pattern in ['div. 1', 'rated for all', 'rated for both', 'rated for everyone']:
             if good_pattern in name:
                 return True
@@ -42,6 +41,9 @@ def _is_matched_for_codeforces(name, for_all = True):
         for bad_pattern in ['educational', 'div. 2', 'div. 3', 'div. 4']:
             if bad_pattern in name:
                 return False
+
+    if 'challenge' in name:
+      return False
 
     return True
 
