@@ -57,7 +57,7 @@ class Meta(commands.Cog):
         await ctx.send_help(ctx.command)
 
     @meta.command(brief='Restarts Remind')
-    @commands.check(check_if_superuser)
+    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
     async def restart(self, ctx):
         """Restarts the bot."""
         # Really, we just exit with a special code
@@ -66,7 +66,7 @@ class Meta(commands.Cog):
         os._exit(RESTART)
 
     @meta.command(brief='Kill Remind')
-    @commands.check(check_if_superuser)
+    @commands.has_any_role('Admin', constants.REMIND_MODERATOR_ROLE)
     async def kill(self, ctx):
         """Restarts the bot."""
         await ctx.send('Dying...')
