@@ -126,8 +126,18 @@ async def bot_error_handler(ctx, exception):
         # Errors already handled in cogs should have .handled = True
         return
 
+    if isinstance(exception, commands.CommandNotFound):
+        # The bot uses mentions as a command prefix (when_mentioned_or), so
+        # simply tagging the bot - often alongside other users - parses as a
+        # bogus command. Silently ignore these instead of replying, which also
+        # avoids echoing the raw message back and pinging the mentioned users.
+        return
+
     exc_info = type(exception), exception, exception.__traceback__
-    await ctx.send(exception)
+    # Send as an alert embed and explicitly suppress mentions so the bot can
+    # never ping users by echoing raw content from the offending message.
+    await ctx.send(embed=embed_alert(exception),
+                   allowed_mentions=discord.AllowedMentions.none())
     logger.exception('Ignoring exception in command {}:'.format(ctx.command), exc_info=exc_info)
 
 

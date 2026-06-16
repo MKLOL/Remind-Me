@@ -73,7 +73,13 @@ async def main():
     intents = discord.Intents.default()
     intents.members = True
     intents.message_content = True
-    bot = commands.Bot(command_prefix=commands.when_mentioned_or('t;'), intents=intents)
+    # The bot intentionally pings reminder *roles*, but should never ping
+    # @everyone/@here or arbitrary users. Enforcing this server-side via
+    # allowed_mentions guards against any code path (error echoes, logging,
+    # code-block breakouts) accidentally turning echoed content into pings.
+    allowed_mentions = discord.AllowedMentions(everyone=False, users=False, roles=True)
+    bot = commands.Bot(command_prefix=commands.when_mentioned_or('t;'),
+                       intents=intents, allowed_mentions=allowed_mentions)
 
     cogs = [file.stem for file in Path('remind', 'cogs').glob('*.py')]
     for extension in cogs:
