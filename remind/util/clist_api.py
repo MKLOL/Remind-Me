@@ -10,7 +10,7 @@ from discord.ext import commands
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-URL_BASE = 'https://clist.by/api/v2/contest'
+URL_BASE = 'https://clist.by/api/v2/contest/'
 _CLIST_API_TIME_DIFFERENCE = 30 * 60  # seconds
 
 
@@ -31,6 +31,10 @@ class ClientError(ClistApiError):
 def _query_api():
     clist_username = os.getenv('CLIST_API_USERNAME')
     clist_api_key = os.getenv('CLIST_API_KEY')
+    if not clist_username or not clist_api_key:
+        logger.error('CLIST API credentials are missing')
+        raise ClientError
+
     contests_start_time = dt.datetime.utcnow() - dt.timedelta(days=2)
     contests_start_time_string = contests_start_time.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -38,18 +42,27 @@ def _query_api():
         "order_by": "start",
         "limit": "500",
         "start__gte": contests_start_time_string,
-        "username": clist_username,
-        "api_key": clist_api_key
     }
+    headers = {'Authorization': f'ApiKey {clist_username}:{clist_api_key}'}
 
     try:
-        resp = requests.get(URL_BASE, params=param)
-        if resp.status_code != 200:
-            raise ClistApiError
-        return resp.json()['objects']
-    except Exception as e:
-        logger.error(f'Request to Clist API encountered error: {e!r}')
-        raise ClientError from e
+        resp = requests.get(URL_BASE, params=param, headers=headers, timeout=15, allow_redirects=False)
+    except requests.RequestException as error:
+        logger.error('CLIST API request failed (%s)', type(error).__name__)
+        raise ClientError from error
+
+    if resp.status_code != 200:
+        logger.error('CLIST API returned HTTP %s', resp.status_code)
+        raise ClientError
+
+    try:
+        contests = resp.json()['objects']
+        if not isinstance(contests, list):
+            raise ValueError('Expected a contest list')
+    except (KeyError, TypeError, ValueError) as error:
+        logger.error('CLIST API returned an invalid contest response')
+        raise ClientError from error
+    return contests
 
 
 def cache(forced=False):
